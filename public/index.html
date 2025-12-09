@@ -528,7 +528,8 @@ initWS();
 }
 
 function initWS(){
-	ws = new WebSocket(`ws://${location.host}`);
+	const proto = location.protocol === "https:" ? "wss" : "ws";
+	ws = new WebSocket(`${proto}://${location.host}`);
 
 	ws.onopen = () => {
 		console.log("WS connected");
