@@ -33,7 +33,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // File uploads
 const upload = multer({ dest: path.join(__dirname, 'uploads/') });
 
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 async function createUser(username, password) {
 	const hash = await bcrypt.hash(password, 10);
 	const res = await db.query(
