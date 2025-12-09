@@ -9,12 +9,18 @@ const { Pool } = require('pg');
 const http = require('http');
 const WebSocket = require('ws');
 const uuid = require('uuid');
+const fs = require("fs");
+const UPLOAD_DIR = path.join(__dirname, "uploads");
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const db = new Pool({ connectionString: process.env.DATABASE_URL });
+const db = new Pool({
+	connectionString: process.env.DATABASE_URL,
+	ssl: { rejectUnauthorized: false }
+});
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -28,10 +34,8 @@ app.use(sessionParser);
 
 // Static
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// File uploads
-const upload = multer({ dest: path.join(__dirname, 'uploads/') });
+app.use("/uploads", express.static(UPLOAD_DIR));
+const upload = multer({ dest: UPLOAD_DIR });
 
 const bcrypt = require('bcryptjs');
 async function createUser(username, password) {
@@ -359,6 +363,18 @@ app.post('/api/users/:id/unfollow', requireAuth, async (req,res)=>{
 		clients.get(req.session.userId).send(JSON.stringify({type:"feed_update"}));
 
 	res.json({ok:true});
+});
+
+server.on("upgrade", (req, socket, head) => {
+	sessionParser(req, {}, () => {
+		if (!req.session?.userId) {
+			socket.destroy();
+			return;
+		}
+		wss.handleUpgrade(req, socket, head, (ws) => {
+			wss.emit("connection", ws, req);
+		});
+	});
 });
 
 // WebSocket auth using shared express-session
