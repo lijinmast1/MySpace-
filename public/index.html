@@ -102,7 +102,6 @@ button.small:hover{background:#bfdbfe;}
 		<hr style="margin:15px 0;border-color:#334155;">
 		<button onclick="chatDrawer.style.display='flex'">📨 Messages</button>
 		<input id="searchInput" placeholder="Search users..." style="padding:8px;border-radius:6px;border:none;">
-		<button id="searchBtn" style="margin-top:10px;width:100%;">Search</button>
 		<ul id="searchResults" style="margin-top:10px;list-style:none;padding-left:0;"></ul>
 	</div>
 
@@ -151,12 +150,6 @@ style="margin-top:10px;background:#bfdbfe;border:none;padding:8px;border-radius:
 
 <h2 style="margin:0 0 10px">Messages 💬</h2>
 
-<!-- Start chat dropdown -->
-<select id="newChatSelect" style="width:100%;padding:6px;border-radius:6px;margin-bottom:10px;">
-	<option disabled selected>Select user to chat</option>
-</select>
-<button id="startChatBtn" style="width:100%;margin-bottom:10px;">Start Chat</button>
-
 <div id="convoList"></div>
 </div>
 
@@ -172,6 +165,8 @@ style="margin-top:10px;background:#bfdbfe;border:none;padding:8px;border-radius:
 
 <script>
 	let me = null, ws = null;
+	let activeChat = null;
+	let activeChatName = "";
 
 	function closeChat(){
 		document.getElementById("chatDrawer").style.display = "none";
@@ -360,35 +355,65 @@ Only people I follow can message me
 
 	async function follow(uid){
 		if(!me) return alert("Login first!");
-		let r = await fetch(`/api/users/${uid}/isFollowing`);
-		let j = await r.json();
-		await fetch(`/api/users/${uid}/${j.following?"unfollow":"follow"}`,{method:"POST"});
 
+		// Check if following
+		const r = await fetch(`/api/users/${uid}/isFollowing`);
+		const j = await r.json();
+
+		// Toggle follow/unfollow
+		const action = j.following ? "unfollow" : "follow";
+		await fetch(`/api/users/${uid}/${action}`, { method: "POST" });
+
+		// Update button text
 		document.getElementById(`followBtn_${uid}`).innerText =
-		j.following ? "Follow" : "Unfollow";
+			j.following ? "Follow" : "Unfollow";
 	}
 
 	async function searchUsers(){
-		let q=document.getElementById("searchInput").value;
-		let r=await fetch(`/api/search/users?q=${q}`);
-		let j=await r.json();
+		const q = document.getElementById("searchInput").value.trim();
+		const r = await fetch(`/api/search/users?q=${encodeURIComponent(q)}`);
+		const j = await r.json();
 
-		document.getElementById("searchResults").innerHTML = "";
+		const list = document.getElementById("searchResults");
+		list.innerHTML = "";
+
 		for(const u of j.results){
-			let st = await fetch(`/api/users/${u.id}/isFollowing`);
-			let s = await st.json();
 
-			let li = document.createElement("li");
-			li.innerHTML = `${u.username} 
-<button onclick="follow(${u.id})" id="followBtn_${u.id}">
-			${s.following ? "Unfollow" : "Follow"}
-			</button>`;
+			// Skip yourself
+			if(u.id === me.id) continue;
 
-			document.getElementById("searchResults").appendChild(li);
+			const li = document.createElement("li");
+			li.style.cursor = "pointer";
+			li.style.padding = "6px 0";
+
+			// FOLLOW STATUS
+			const fr = await fetch(`/api/users/${u.id}/isFollowing`);
+			const fs = await fr.json();
+
+			// Click → open chat immediately
+			li.onclick = () => {
+				// Open chat drawer
+				chatDrawer.style.display = "flex";
+
+				// Open chat with user
+				openChat(u.username, u.id);
+			};
+
+			// Inner UI
+			li.innerHTML = `
+				<span style="font-weight:bold;">${u.username}</span>
+				<button onclick="event.stopPropagation(); follow(${u.id})"
+						id="followBtn_${u.id}"
+						style="margin-left:10px;">
+					${fs.following ? "Unfollow" : "Follow"}
+				</button>
+			`;
+
+			list.appendChild(li);
 		}
 	}
 
-	let activeChat = null;
+	document.getElementById("searchInput").oninput = searchUsers;
 
 // Load conversations into sidebar
 	async function loadConversations(){
@@ -408,6 +433,7 @@ style="padding:8px;cursor:pointer;border-radius:4px;margin-bottom:4px;background
 
 // Open chat by selecting a username
 	async function openChat(name,id){
+		activeChatName = name;
 // Highlight selected chat
 		document.querySelectorAll("#convoList > div").forEach(el => el.classList.remove("selectedChat"));
 		const selected = document.getElementById(`convo_${id}`);
@@ -423,7 +449,17 @@ style="padding:8px;cursor:pointer;border-radius:4px;margin-bottom:4px;background
 		}
 
 		activeChat = id;
-		chatWindow.innerHTML = `<div>Loading chat with <b>${name}</b>...</div>`;
+		chatWindow.innerHTML = `
+			<div id="chatPlaceholder" style="
+				text-align:center;
+				margin-top:40px;
+				color:#777;
+				font-size:14px;
+			">
+				Starting a conversation with <b>${name}</b>...<br>
+				<span style="font-size:12px;">Say hello!</span>
+			</div>
+		`;
 		ws.send(JSON.stringify({type:"history",withUser:id}));
 		chatDrawer.style.display="flex";
 	}
@@ -437,12 +473,32 @@ style="padding:8px;cursor:pointer;border-radius:4px;margin-bottom:4px;background
 
 // Render messages
 	function renderHistory(list){
+		// Remove placeholder once messages are loaded
+		const ph = document.getElementById("chatPlaceholder");
+		if (ph) ph.remove();
+
 		chatWindow.innerHTML="";
-		list.forEach(m=>addMsg(
-			m.from_user_id===me.id?"You":m.from_user_id,
-			m.text,m.created_at,
-			m.from_user_id===me.id
-			));
+		if (list.length === 0) {
+			chatWindow.innerHTML = `
+				<div id="chatPlaceholder" style="
+					text-align:center;
+					margin-top:40px;
+					color:#777;
+					font-size:14px;
+				">
+					You haven't started chatting with <b>${activeChatName}</b> yet.<br>
+					Say hello!
+				</div>
+			`;
+			return;
+		}
+
+		list.forEach(m => addMsg(
+			m.from_user_id === me.id ? "You" : m.from_user_id,
+			m.text,
+			m.created_at,
+			m.from_user_id === me.id
+		));
 	}
 
 // Print a single chat message to the chat window
@@ -469,7 +525,6 @@ function initAfterLogin(){
 document.getElementById("chatDrawer").style.display="none"; // Hidden until opened manually
 loadFeed();
 initWS();
-loadAllUsers();  // populates dropdown
 }
 
 function initWS(){
@@ -530,36 +585,6 @@ async function boot(){
 	}
 }
 boot();
-
-document.getElementById("searchBtn").onclick=searchUsers;
-
-// Load all users into "Start Chat" dropdown
-async function loadAllUsers(){
-	let r = await fetch("/api/search/users?q=");
-	let j = await r.json();
-	newChatSelect.innerHTML = `<option disabled selected>Select user to chat</option>`;
-	j.results.forEach(u=>{
-		if(u.id!==me.id)
-			newChatSelect.innerHTML+=`<option value="${u.id}">${u.username}</option>`;
-	});
-}
-
-// Start new conversation
-startChatBtn.onclick = async ()=>{
-	const id = newChatSelect.value;
-	const name = newChatSelect.options[newChatSelect.selectedIndex].text;
-	if(!id) return alert("Choose someone first!");
-
-	let r = await fetch(`/api/users/${id}/canDM`);
-	let j = await r.json();
-
-	if (!j.allowed) {
-		alert(`${name} only allows messages from people they follow.`);
-		return;
-	}
-
-	openChat(name,id);
-};
 
 </script>
 

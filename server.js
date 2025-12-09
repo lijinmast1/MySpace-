@@ -205,6 +205,19 @@ app.post('/api/users/:id/unfollow', requireAuth, async (req, res) => {
 	res.json({ ok: true });
 });
 
+// Is the current user following someone?
+app.get('/api/users/:id/isFollowing', requireAuth, async (req, res) => {
+	const me = req.session.userId;
+	const them = req.params.id;
+
+	const r = await db.query(
+		'SELECT 1 FROM follows WHERE follower_id=$1 AND followee_id=$2',
+		[me, them]
+	);
+
+	res.json({ following: r.rows.length > 0 });
+});
+
 // Search users
 app.get('/api/search/users', requireAuth, async (req, res) => {
 	const q = (req.query.q || '').toLowerCase();
